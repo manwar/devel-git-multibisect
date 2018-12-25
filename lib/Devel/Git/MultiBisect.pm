@@ -2,7 +2,7 @@ package Devel::Git::MultiBisect;
 use strict;
 use warnings;
 use v5.10.0;
-use Devel::Git::MultiBisect::Opts qw( process_options );
+use Devel::Git::MultiBisect::Init;
 use Devel::Git::MultiBisect::Auxiliary qw(
     clean_outputfile
     hexdigest_one_file
@@ -160,58 +160,10 @@ Object of Devel::Git::MultiBisect child class.
 
 sub new {
     my ($class, $params) = @_;
-    my %data;
 
-    while (my ($k,$v) = each %{$params}) {
-        $data{$k} = $v;
-    }
+    my $data = Devel::Git::MultiBisect::Init::init($params);
 
-    my @missing_dirs = ();
-    for my $dir ( qw| gitdir workdir outputdir | ) {
-        push @missing_dirs, $data{$dir}
-            unless (-d $data{$dir});
-    }
-    if (@missing_dirs) {
-        croak "Cannot find directory(ies): @missing_dirs";
-    }
-
-    $data{last_short} = substr($data{last}, 0, $data{short});
-    $data{commits} = _get_commits(\%data);
-    $data{targets} //= [];
-    $data{commit_counter} = 0;
-
-    return bless \%data, $class;
-}
-
-sub _get_commits {
-    my $dataref = shift;
-    my $cwd = cwd();
-    chdir $dataref->{gitdir} or croak "Unable to chdir";
-    my @commits = ();
-    my ($older, $cmd);
-    my ($fh, $err) = File::Temp::tempfile();
-    if ($dataref->{last_before}) {
-        $older = '^' . $dataref->{last_before};
-        $cmd = "git rev-list --reverse $older $dataref->{last} 2>$err";
-    }
-    else {
-        $older = $dataref->{first} . '^';
-        $cmd = "git rev-list --reverse ${older}..$dataref->{last} 2>$err";
-    }
-    chomp(@commits = `$cmd`);
-    if (! -z $err) {
-        open my $FH, '<', $err or croak "Unable to open $err for reading";
-        my $error = <$FH>;
-        chomp($error);
-        close $FH or croak "Unable to close $err after reading";
-        croak $error;
-    }
-    my @extended_commits = map { {
-        sha     => $_,
-        short   => substr($_, 0, $dataref->{short}),
-    } } @commits;
-    chdir $cwd or croak "Unable to return to original directory";
-    return [ @extended_commits ];
+    return bless $data, $class;
 }
 
 =head2 C<get_commits_range()>

@@ -3,12 +3,9 @@ use strict;
 use warnings;
 use v5.10.0;
 use parent ( qw| Devel::Git::MultiBisect | );
-use Devel::Git::MultiBisect::Opts qw( process_options );
 use Devel::Git::MultiBisect::Auxiliary qw(
     validate_list_sequence
 );
-#clean_outputfile
-#hexdigest_one_file
 use Carp;
 use Cwd;
 use File::Temp;
@@ -52,13 +49,13 @@ use this package, F<Devel::Git::MultiBisect::BuildTransitions>.
 
 sub new {
     my ($class, $params) = @_;
-    my $obj = Devel::Git::MultiBisect->new($params);
-    my %data = %{$obj};
-    delete $data{targets};
-    delete $data{test_command};
-    #say STDERR "AAA:";
-    #pp( { map { $_ => $data{$_} } grep { $_ ne 'commits' } keys %data } );
-    return bless \%data, $class;
+
+    my $data = Devel::Git::MultiBisect::Init::init($params);
+
+    delete $data->{targets};
+    delete $data->{test_command};
+
+    return bless $data, $class;
 }
 
 =head2 C<multisect_builds()>
@@ -68,7 +65,7 @@ sub new {
 =item * Purpose
 
 With a given set of configuration options and a specified range of F<git>
-commits, identify the popint where the "build command" -- typically, F<make>
+commits, identify the point where the "build command" -- typically, F<make>
 -- first threw exceptions and then all subsequent commits where the build-time
 exceptions materially changed.  A "material change" would be either a
 correction of all exceptions or a set of different build-time exceptions from
