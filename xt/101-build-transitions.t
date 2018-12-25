@@ -39,43 +39,14 @@ for my $k ( qw|
 
 my $cwd = cwd();
 
-my (%args, $params, $self);
-#%args = (
-#  branch            => "master",
-#  configure_command => "perl Makefile.PL 1>/dev/null",
-#  first             => "v5.26.3",
-#  gitdir            => "/home/jkeenan/gitwork/perl",
-#  last              => "v5.26.9",
-#  make_command      => "make 1>/dev/null",
-#  outputdir         => "/tmp/yvv_BSgfHP",
-#  repository        => "origin",
-#  short             => 7,
-#  test_command      => "prove -vb",
-#  verbose           => 0,
-#  workdir           => "/home/jkeenan/gitwork/devel-git-multibisect",
-#);
-
-
+my ($self);
 my ($good_gitdir);
 $good_gitdir = "/home/jkeenan/gitwork/perl2";
-my $first = '00d5a150792677746a950e9c1db6b0d094b113af';
-my $last  = '698ea056906af7b60f00b30a44b3591dcbf07a05';
+my $first = '7c9c5138c6a704d1caf5908650193f777b81ad23';
+my $last  = '8f6628e3029399ac1e48dfcb59c3cd30e5127c3e';
 my $branch = 'blead';
 my $configure_command = 'sh ./Configure -des -Dusedevel';
-my %test_command = '';
-
-
-=pod
-
-00d5a150792677746a950e9c1db6b0d094b113af refs/tags/v5.27.3
-59ddc66bf56b5bb38d6501ff3a6c132bce020d8a refs/tags/v5.27.4
-6060757363a636eb1aad2a114417ae5cef85613e refs/tags/v5.27.5
-98a3f44f528b7c677f68fe7d2fd8ece45b79535a refs/tags/v5.27.6
-6f8f9770f72e74d48b879fa817d78837af793582 refs/tags/v5.27.7
-8ac0ebb14b343d555c93f87826c15468b5ec1c4a refs/tags/v5.27.8
-698ea056906af7b60f00b30a44b3591dcbf07a05 refs/tags/v5.27.9
-
-=cut
+my $test_command = '';
 
 %args = (
     gitdir  => $good_gitdir,
@@ -83,10 +54,10 @@ my %test_command = '';
     last    => $last,
     branch  => $branch,
     configure_command => $configure_command,
-    test_command => '',
+    test_command => $test_command,
 );
 $params = process_options(%args);
-pp($params);
+#pp($params);
 is($params->{gitdir}, $good_gitdir, "Got expected gitdir");
 is($params->{first}, $first, "Got expected first commit to be studied");
 is($params->{last}, $last, "Got expected last commit to be studied");
@@ -95,9 +66,23 @@ is($params->{configure_command}, $configure_command, "Got expected configure_com
 ok(! $params->{test_command}, "test_command empty as expected");
 ok(! $params->{verbose}, "verbose not requested");
 
+
 $self = Devel::Git::MultiBisect::BuildTransitions->new($params);
 ok($self, "new() returned true value");
 isa_ok($self, 'Devel::Git::MultiBisect::BuildTransitions');
-pp([ keys %$self ]);
+isa_ok($self, 'Devel::Git::MultiBisect');
+#say STDERR "XXX:";
+#pp([ keys %$self ]);
+ok(! exists $self->{targets}, "BuildTransitions has no need of 'targets' attribute");
+ok(! exists $self->{test_command}, "BuildTransitions has no need of 'test_command' attribute");
+
+my $this_commit_range = $self->get_commits_range();
+ok($this_commit_range, "get_commits_range() returned true value");
+is(ref($this_commit_range), 'ARRAY', "get_commits_range() returned array ref");
+
+pp($this_commit_range);
+
+is($this_commit_range->[0], $first, "Got expected first commit in range");
+is($this_commit_range->[-1], $last, "Got expected last commit in range");
 
 done_testing();

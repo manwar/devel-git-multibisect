@@ -13,6 +13,7 @@ use Carp;
 use Cwd;
 use File::Temp;
 use List::Util qw(first sum);
+use Data::Dump qw(dd pp);
 
 our $VERSION = '0.08';
 
@@ -45,12 +46,20 @@ use this package, F<Devel::Git::MultiBisect::BuildTransitions>.
 
 =head1 METHODS
 
-This package inherits methods from F<Devel::Git::MultiBisect>.  Only methods unique to
-F<Devel::Git::MultiBisect::AllCommits> are documented here.  See the documentation for
-F<Devel::Git::MultiBisect> for all other methods, including:
+=head2 C<new()>
 
-    new()
-    get_commits_range()
+=cut
+
+sub new {
+    my ($class, $params) = @_;
+    my $obj = Devel::Git::MultiBisect->new($params);
+    my %data = %{$obj};
+    delete $data{targets};
+    delete $data{test_command};
+    #say STDERR "AAA:";
+    #pp( { map { $_ => $data{$_} } grep { $_ ne 'commits' } keys %data } );
+    return bless \%data, $class;
+}
 
 =head2 C<multisect_builds()>
 
@@ -702,3 +711,10 @@ disk for later human inspection.
 1;
 
 __END__
+This package inherits methods from F<Devel::Git::MultiBisect>.  Only methods unique to
+F<Devel::Git::MultiBisect::AllCommits> are documented here.  See the documentation for
+F<Devel::Git::MultiBisect> for all other methods, including:
+
+    new()
+    get_commits_range()
+
