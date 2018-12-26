@@ -4,12 +4,14 @@ use warnings;
 use v5.10.0;
 use parent ( qw| Devel::Git::MultiBisect | );
 use Devel::Git::MultiBisect::Auxiliary qw(
+    hexdigest_one_file
     validate_list_sequence
 );
 use Carp;
 use Cwd;
-use File::Temp;
 use List::Util qw(first sum);
+use File::Spec;
+use File::Temp qw( tempdir );
 use Data::Dump qw(dd pp);
 
 our $VERSION = '0.08';
@@ -103,18 +105,18 @@ disk for later human inspection.
 
 =cut
 
-#sub multisect_builds {
-#    my ($self) = @_;
-#
-#    # Prepare data structures in the object to hold results of test runs on a
-#    # per target, per commit basis.
-#    # Also, "prime" the data structure by performing test runs for each target
-#    # on the first and last commits in the commit range, storing that test
-#    # output on disk as well.
-#
-#    my $start_time = time();
-#    $self->_prepare_for_multisection();
-#
+sub multisect_builds {
+    my ($self) = @_;
+
+    # Prepare data structures in the object to hold results of build runs on a
+    # per target, per commit basis.
+    # Also, "prime" the data structure by performing build runs for each target
+    # on the first and last commits in the commit range, storing that build
+    # output on disk as well.
+
+    my $start_time = time();
+    $self->_prepare_for_multisection();
+
 #    my $target_count = scalar(@{$self->{targets}});
 #    my $max_target_idx = $#{$self->{targets}};
 #
@@ -167,35 +169,139 @@ disk for later human inspection.
 #        say "Ran $timings{runs} runs; elapsed: $timings{elapsed} sec; mean: $timings{mean} sec";
 #    }
 #    $self->{timings}	  = \%timings;
-#
-#    return 1;
-#}
-#
-#sub _prepare_for_multisection {
-#    my $self = shift;
-#
-#    # get_commits_range is inherited from parent
-#
-#    my $all_commits = $self->get_commits_range();
-#    $self->{all_outputs} = [ (undef) x scalar(@{$all_commits}) ];
-#
-#    my %multisected_outputs_table;
-#    for my $idx (0, $#{$all_commits}) {
-#
-#        # run_test_files_on_one_commit is inherited from parent
-#
-#        my $outputs = $self->run_test_files_on_one_commit($all_commits->[$idx]);
-#        $self->{all_outputs}->[$idx] = $outputs;
+
+    return 1;
+}
+
+sub _prepare_for_multisection {
+    my $self = shift;
+
+    # get_commits_range is inherited from parent
+
+    my $all_commits = $self->get_commits_range();
+    $self->{all_outputs} = [ (undef) x scalar(@{$all_commits}) ];
+
+    my %multisected_outputs_table;
+    for my $idx (0, $#{$all_commits}) {
+
+        # run_build_on_one_commit is inherited from parent
+
+        my $outputs = $self->run_build_on_one_commit($all_commits->[$idx]);
+        $self->{all_outputs}->[$idx] = $outputs;
 #        for my $target (@{$outputs}) {
 #            my @other_keys = grep { $_ ne 'file_stub' } keys %{$target};
 #            $multisected_outputs_table{$target->{file_stub}}[$idx] =
 #                { map { $_ => $target->{$_} } @other_keys };
 #        }
-#    }
-#    $self->{multisected_outputs} = { %multisected_outputs_table };
-#    return \%multisected_outputs_table;
-#}
-#
+    }
+    $self->{multisected_outputs} = { %multisected_outputs_table };
+#pp($self->{all_outputs});
+    return \%multisected_outputs_table;
+}
+
+sub run_build_on_one_commit {
+    my ($self, $commit) = @_;
+    $commit //= $self->{commits}->[0]->{sha};
+    say "Building commit: $commit" if ($self->{verbose});
+
+    my $starting_branch = $self->_configure_one_commit($commit);
+
+    my $outputsref = $self->_build_one_commit($commit);
+    say "Tested commit:  $commit; returning to: $starting_branch"
+        if ($self->{verbose});
+
+    # We want to return to our basic branch (e.g., 'master', 'blead')
+    # before checking out a new commit.
+
+    system(qq|git checkout --quiet $starting_branch|)
+        and croak "Unable to 'git checkout --quiet $starting_branch";
+
+    $self->{commit_counter}++;
+    say "Commit counter: $self->{commit_counter}" if $self->{verbose};
+
+    return $outputsref;
+}
+
+sub _configure_one_commit {
+    my ($self, $commit) = @_;
+    chdir $self->{gitdir} or croak "Unable to change to $self->{gitdir}";
+    system(qq|git clean --quiet -dfx|) and croak "Unable to 'git clean --quiet -dfx'";
+    my $starting_branch = $self->{branch};
+
+    system(qq|git checkout --quiet $commit|) and croak "Unable to 'git checkout --quiet $commit'";
+    say "Running '$self->{configure_command}'" if $self->{verbose};
+    system($self->{configure_command}) and croak "Unable to run '$self->{configure_command})'";
+    return $starting_branch;
+}
+
+sub _build_one_commit {
+    my ($self, $commit) = @_; 
+    my $short_sha = substr($commit,0,$self->{short});
+    my @outputs;
+    my $build_log = File::Spec->catfile(
+        $self->{outputdir},
+        join('.' => (
+            $short_sha,
+            'make',
+            'output',
+            'txt'
+        )),
+    );
+    my $command_raw = $self->{make_command};
+    my $cmd = qq|$command_raw > $build_log 2>&1|;
+    say "Running '$cmd'" if $self->{verbose};
+    my $rv = system($cmd);
+    my $filtered_errors_file = $self->_filter_build_log($build_log, $short_sha);
+    push @outputs, {
+        commit => $commit,
+        commit_short => $short_sha,
+        file => $filtered_errors_file,
+        md5_hex => hexdigest_one_file($filtered_errors_file),
+    };
+    say "Created $filtered_errors_file" if $self->{verbose};
+    return \@outputs;
+}
+
+sub _filter_build_log {
+    my ($self, $buildlog, $short_sha) = @_;
+    say "short_sha: $short_sha";
+    my $tdir = tempdir( CLEANUP => 1 );
+    
+    my $ackpattern = q|-A2 '^[^:]+:\d+:\d+:\s+error:'|;
+    my @raw_acklines = grep { ! m/^--\n/ } `ack $ackpattern $buildlog`;
+    chomp(@raw_acklines);
+    #pp(\@raw_acklines);
+    croak "Got incorrect count of lines from ack; should be divisible by 3"
+        unless scalar(@raw_acklines) % 3 == 0;
+    
+    my @refined_errors = ();
+    for (my $i=0; $i <= $#raw_acklines; $i += 3) {
+        my $j = $i + 2;
+        my @this_error = ();
+        my ($normalized) =
+            $raw_acklines[$i] =~ s/^([^:]+):\d+:\d+:(.*)$/$1:_:_:$2/r;
+        push @this_error, ($normalized, @raw_acklines[$i+1 .. $j]);
+        push @refined_errors, \@this_error;
+    }
+    
+    my $error_report_file =
+        File::Spec->catfile($self->{workdir}, "$short_sha.make.errors.rpt.txt");
+    say "rpt: $error_report_file";
+    open my $OUT, '>', $error_report_file
+        or croak "Unable to open $error_report_file for writing";
+    if (@refined_errors) {
+        for (my $i=0; $i<=($#refined_errors -1); $i++) {
+            say $OUT join "\n" => @{$refined_errors[$i]};
+            say $OUT "--";
+        }
+        say $OUT join "\n" => @{$refined_errors[-1]};
+    }
+    close $OUT or croak "Unable to close $error_report_file after writing";
+    return $error_report_file;
+}
+
+###########################################################
+
 #sub _multisect_one_target {
 #    my ($self, $target_idx) = @_;
 #    croak "Must supply index of test file within targets list"
