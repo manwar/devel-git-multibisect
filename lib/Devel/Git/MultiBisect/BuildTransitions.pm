@@ -173,53 +173,70 @@ commit in the commit range.
 
 =cut
 
+    my ($min_idx, $max_idx)     = (0, $#{$self->{commits}});
+    my $this_target_status      = 0;
+    my $current_start_idx       = $min_idx;
+    my $current_end_idx         = $max_idx;
+    my $overall_start_md5_hex   = $self->{all_outputs}->[$min_idx]->{md5_hex};
+    my $overall_end_md5_hex     = $self->{all_outputs}->[$max_idx]->{md5_hex};
+    my $n = 0;
 
-#    my $target_count = scalar(@{$self->{targets}});
-#    my $max_target_idx = $#{$self->{targets}};
-#
-#    # 1 element per test target file, keyed on stub, value 0 or 1
-#    my %overall_status = map { $self->{targets}->[$_]->{stub} => 0 } (0 .. $max_target_idx);
-#
-#    # Overall success criterion:  We must have completed multisection --
-#    # identified all transitional commits -- for each target and recorded that
-#    # completion with a '1' in its element in %overall_status.  If we have
-#    # achieved that, then each element in %overall_status will have the value
-#    # '1' and they will sum up to the total number of test files being
-#    # targeted.
-#
-#    until (sum(values(%overall_status)) == $target_count) {
-#        if ($self->{verbose}) {
-#            say "target count|sum of status values: ",
-#                join('|' => $target_count, sum(values(%overall_status)));
-#        }
-#
-#        # Target and process one file at a time.  To multisect a target is to
-#        # identify all its transitional commits over the commit range.
-#
-#        for my $target_idx (0 .. $max_target_idx) {
-#            my $target = $self->{targets}->[$target_idx];
-#            if ($self->{verbose}) {
-#                say "Targeting file: $target->{path}";
-#            }
-#
-#            my $rv = $self->_multisect_one_target($target_idx);
-#            if ($rv) {
-#                $overall_status{$target->{stub}}++;
-#            }
-#        }
-#    } # END until loop
+    while (! $this_target_status) {
+
+        # What gets (or may get) updated or assigned to in the course of one rep of this loop:
+        # $current_start_idx
+        # $current_end_idx
+        # $n
+        # $self->{all_outputs}
+
+        my $h = sprintf("%d" => (($current_start_idx + $current_end_idx) / 2));
+        $self->_run_one_commit_and_assign($h);
+
+        my $current_start_md5_hex = $self->{all_outputs}->[$current_start_idx]->{md5_hex};
+        my $target_h_md5_hex      = $self->{all_outputs}->[$h]->{md5_hex};
+
+        # Decision criteria:
+        # If $target_h_md5_hex eq $current_start_md5_hex, then the first
+        # transition is *after* index $h.  Hence bisection should go upwards.
+
+        # If $target_h_md5_hex ne $current_start_md5_hex, then the first
+        # transition has come *before* index $h.  Hence bisection should go
+        # downwards.  However, since the test of where the first transition is
+        # is that index j-1 has the same md5_hex as $current_start_md5_hex but
+        #         index j   has a different md5_hex, we have to do a run on
+        #         j-1 as well.
+
+        if ($target_h_md5_hex ne $current_start_md5_hex) {
+            my $g = $h - 1;
+            $self->_run_one_commit_and_assign($g);
+            my $target_g_md5_hex  = $self->{all_outputs}->[$g]->{md5_hex};
+            if ($target_g_md5_hex eq $current_start_md5_hex) {
+                if ($target_h_md5_hex eq $overall_end_md5_hex) {
+                }
+                else {
+                    $current_start_idx  = $h;
+                    $current_end_idx    = $max_idx;
+                }
+                $n++;
+            }
+            else {
+                # Bisection should continue downwards
+                $current_end_idx = $h;
+                $n++;
+            }
+        }
+        else {
+            # Bisection should continue upwards
+            $current_start_idx = $h;
+            $n++;
+        }
+        $this_target_status = $self->_evaluate_status_of_build_runs();
+    }
+
+
     my $end_time = time();
-#    my %distinct_commits = ();
-#    for my $target (keys %{$self->{multisected_outputs}}) {
-#        for my $el (@{$self->{multisected_outputs}->{$target}}) {
-#            if (defined $el) {
-#                $distinct_commits{$el->{commit}} = 1;
-#            }
-#        }
-#    }
     my %timings = (
 	    elapsed	=> $end_time - $start_time,
-        #runs => scalar(keys(%distinct_commits)),
         runs => scalar( grep {defined $_} @{$self->{all_outputs}} ),
     );
     $timings{mean} = sprintf("%.02f" => $timings{elapsed} / $timings{runs});
@@ -244,15 +261,7 @@ sub _prepare_for_multisection {
 
         my $outputs = $self->run_build_on_one_commit($all_commits->[$idx]);
         $self->{all_outputs}->[$idx] = $outputs;
-#        for my $target (@{$outputs}) {
-#            my @other_keys = grep { $_ ne 'file_stub' } keys %{$target};
-#            $multisected_outputs_table{$target->{file_stub}}[$idx] =
-#                { map { $_ => $target->{$_} } @other_keys };
-#        }
     }
-#    $self->{multisected_outputs} = { %multisected_outputs_table };
-##pp($self->{all_outputs});
-#    return \%multisected_outputs_table;
     return $self->{all_outputs};
 }
 
@@ -357,171 +366,34 @@ sub _filter_build_log {
     return $error_report_file;
 }
 
-###########################################################
+sub _evaluate_status_of_build_runs {
+    my ($self) = @_;
+    my @trans = ();
+    for my $o (@{$self->{all_outputs}}) {
+        push @trans,
+            defined $o ? $o->{md5_hex} : undef;
+    }
+    my $vls = validate_list_sequence(\@trans);
+    return ( (scalar(@{$vls}) == 1 ) and ($vls->[0])) ? 1 : 0;
+}
 
-#sub _multisect_one_target {
-#    my ($self, $target_idx) = @_;
-#    croak "Must supply index of test file within targets list"
-#        unless(defined $target_idx and $target_idx =~ m/^\d+$/);
-#    croak "You must run _prepare_for_multisection() before any stand-alone run of _multisect_one_target()"
-#        unless exists $self->{multisected_outputs};
-#    my $target  = $self->{targets}->[$target_idx];
-#    my $stub    = $target->{stub};
-#
-#    # The condition for successful multisection of one particular test file
-#    # target is that the list of md5_hex values for files holding the output of TAP
-#    # run over the commit range exhibit the following behavior:
-#
-#    # The list is composed of sub-sequences (a) whose elements are either (i)
-#    # the md5_hex value for the TAP outputfiles at a given commit or (ii)
-#    # undefined; (b) if defined, the md5_values are all identical; (c) the
-#    # first and last elements of the sub-sequence are both defined; and (d)
-#    # the sub-sequence's unique defined value never reoccurs in any subsequent
-#    # sub-sequence.
-#
-#    # For each run of _multisect_one_target() over a given target, it will
-#    # return a true value (1) if the above condition(s) are met and 0
-#    # otherwise.  The caller (multisect_builds()) will handle that return
-#    # value appropriately.  The caller will then call _multisect_one_target()
-#    # on the next target, if any.
-#
-#    # The objective of multisection is to identify the git commits at which
-#    # the test output targeted materially changed.  We are using
-#    # an md5_hex value for that test file as a presumably valid unique
-#    # identifier for that file's content.  A transition point is a commit at
-#    # which the output file's md5_hex differs from that of the immediately
-#    # preceding commit.  So, to identify the first transition point for a
-#    # given target, we need to locate the commit at which the md5_hex changed
-#    # from that found in the very first commit in the designated commit range.
-#    # Once we've identified the first transition point, we'll look for the
-#    # second transition point, i.e., that where the md5_hex changed from that
-#    # observed at the first transition point.  We'll continue that process
-#    # until we get to a transition point where the md5_hex is identical to
-#    # that of the very last commit in the commit range.
-#
-#    # This entails checking out the source code at each commit calculated by
-#    # the bisection algorithm, configuring and building the code, running the
-#    # test targets at that commit, computing their md5_hex values and storing
-#    # them in the 'multisected_outputs' structure.  The _prepare_for_multisection()
-#    # method will pre-populate that structure with md5_hexes for each test
-#    # file for each of the first and last commits in the commit range.
-#
-#    # Since the configuration and build at a particular commit may be
-#    # time-consuming, once we have completed those steps we will run all the
-#    # test files at once and store their results in 'multisected_outputs'
-#    # immediately.  We will make our bisection decision based only on analysis
-#    # of the current target.  But when we come to the second target file we
-#    # will be able to skip configuration, build and test-running at commits
-#    # visited during the pass over the first target file.
-#
-#    my ($min_idx, $max_idx)     = (0, $#{$self->{commits}});
-#    my $this_target_status      = 0;
-#    my $current_start_idx       = $min_idx;
-#    my $current_end_idx         = $max_idx;
-#    my $overall_start_md5_hex   =
-#            $self->{multisected_outputs}->{$stub}->[$min_idx]->{md5_hex};
-#    my $overall_end_md5_hex     =
-#            $self->{multisected_outputs}->{$stub}->[$max_idx]->{md5_hex};
-#    my $excluded_targets = {};
-#    my $n = 0;
-#
-#    while (! $this_target_status) {
-#
-#        # Start multisecting on this test target file: one transition point at
-#        # a time until we've got them all for this test file.
-#
-#        # What gets (or may get) updated or assigned to in the course of one rep of this loop:
-#        # $current_start_idx
-#        # $current_end_idx
-#        # $n
-#        # $excluded_targets
-#        # $self->{all_outputs}
-#        # $self->{multisected_outputs}
-#
-#        my $h = sprintf("%d" => (($current_start_idx + $current_end_idx) / 2));
-#        $self->_run_one_commit_and_assign($h);
-#
-#        my $current_start_md5_hex =
-#            $self->{multisected_outputs}->{$stub}->[$current_start_idx]->{md5_hex};
-#        my $target_h_md5_hex  =
-#            $self->{multisected_outputs}->{$stub}->[$h]->{md5_hex};
-#
-#        # Decision criteria:
-#        # If $target_h_md5_hex eq $current_start_md5_hex, then the first
-#        # transition is *after* index $h.  Hence bisection should go upwards.
-#
-#        # If $target_h_md5_hex ne $current_start_md5_hex, then the first
-#        # transition has come *before* index $h.  Hence bisection should go
-#        # downwards.  However, since the test of where the first transition is
-#        # is that index j-1 has the same md5_hex as $current_start_md5_hex but
-#        #         index j   has a different md5_hex, we have to do a run on
-#        #         j-1 as well.
-#
-#        if ($target_h_md5_hex ne $current_start_md5_hex) {
-#            my $g = $h - 1;
-#            $self->_run_one_commit_and_assign($g);
-#            my $target_g_md5_hex  = $self->{multisected_outputs}->{$stub}->[$g]->{md5_hex};
-#            if ($target_g_md5_hex eq $current_start_md5_hex) {
-#                if ($target_h_md5_hex eq $overall_end_md5_hex) {
-#                }
-#                else {
-#                    $current_start_idx  = $h;
-#                    $current_end_idx    = $max_idx;
-#                }
-#                $n++;
-#            }
-#            else {
-#                # Bisection should continue downwards
-#                $current_end_idx = $h;
-#                $n++;
-#            }
-#        }
-#        else {
-#            # Bisection should continue upwards
-#            $current_start_idx = $h;
-#            $n++;
-#        }
-#        $this_target_status = $self->_evaluate_status_one_target_run($target_idx);
-#    }
-#    return 1;
-#}
-#
-#sub _evaluate_status_one_target_run {
-#    my ($self, $target_idx) = @_;
-#    my @trans = ();
-#    for my $o (@{$self->{all_outputs}}) {
-#        push @trans,
-#            defined $o ? $o->[$target_idx]->{md5_hex} : undef;
-#    }
-#    my $vls = validate_list_sequence(\@trans);
-#    return ( (scalar(@{$vls}) == 1 ) and ($vls->[0])) ? 1 : 0;
-#}
-#
-#sub _run_one_commit_and_assign {
-#
-#    # If we've already stashed a particular commit's outputs in
-#    # all_outputs (and, simultaneously) in multisected_outputs,
-#    # then we don't need to actually perform a run.
-#
-#    # This internal method assigns to all_outputs and multisected_outputs in
-#    # place.
-#
-#    my ($self, $idx) = @_;
-#    my $this_commit = $self->{commits}->[$idx]->{sha};
-#    unless (defined $self->{all_outputs}->[$idx]) {
-#        say "\nAt commit counter $self->{commit_counter}, preparing to test commit ", $idx + 1, " of ", scalar(@{$self->{commits}})
-#            if $self->{verbose};
-#        my $these_outputs = $self->run_test_files_on_one_commit($this_commit);
-#        $self->{all_outputs}->[$idx] = $these_outputs;
-#
-#        for my $target (@{$these_outputs}) {
-#            my @other_keys = grep { $_ ne 'file_stub' } keys %{$target};
-#            $self->{multisected_outputs}->{$target->{file_stub}}->[$idx] =
-#                { map { $_ => $target->{$_} } @other_keys };
-#        }
-#    }
-#}
-#
+sub _run_one_commit_and_assign {
+
+    # If we've already stashed a particular commit's outputs in all_outputs,
+    # then we don't need to actually perform a run.
+
+    # This internal method assigns to all_outputs in place.
+
+    my ($self, $idx) = @_;
+    my $this_commit = $self->{commits}->[$idx]->{sha};
+    unless (defined $self->{all_outputs}->[$idx]) {
+        say "\nAt commit counter $self->{commit_counter}, preparing to test commit ", $idx + 1, " of ", scalar(@{$self->{commits}})
+            if $self->{verbose};
+        my $these_outputs = $self->run_build_on_one_commit($this_commit);
+        $self->{all_outputs}->[$idx] = $these_outputs;
+    }
+}
+
 #=head2 C<get_multisected_outputs()>
 #
 #=over 4
@@ -871,10 +743,3 @@ sub _filter_build_log {
 1;
 
 __END__
-This package inherits methods from F<Devel::Git::MultiBisect>.  Only methods unique to
-F<Devel::Git::MultiBisect::AllCommits> are documented here.  See the documentation for
-F<Devel::Git::MultiBisect> for all other methods, including:
-
-    new()
-    get_commits_range()
-
