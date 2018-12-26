@@ -115,7 +115,64 @@ sub multisect_builds {
     # output on disk as well.
 
     my $start_time = time();
-    $self->_prepare_for_multisection();
+    my $all_outputs = $self->_prepare_for_multisection();
+    #say STDERR "AAA: In multisect_builds(), after _prepare_for_multisection()";
+    #pp($all_outputs);
+
+=pod
+
+At this point, C<$all_outputs> is an array ref with one
+element per commit in the commit range.  If a commit has been visited, the
+element is a hash ref with 4 key-value pairs like the ones below.  If the
+commit has not yet been visited, the element is C<undef>.
+
+    [
+      {
+        commit => "7c9c5138c6a704d1caf5908650193f777b81ad23",
+        commit_short => "7c9c513",
+        file => "/home/jkeenan/learn/perl/multisect/7c9c513.make.errors.rpt.txt",
+        md5_hex => "d41d8cd98f00b204e9800998ecf8427e",
+      },
+      undef,
+      undef,
+    ...
+      undef,
+      {
+        commit => "8f6628e3029399ac1e48dfcb59c3cd30e5127c3e",
+        commit_short => "8f6628e",
+        file => "/home/jkeenan/learn/perl/multisect/8f6628e.make.errors.rpt.txt",
+        md5_hex => "fdce7ff2f07a0a8cd64005857f4060d4",
+      },
+    ]
+
+Unlike F<Devel::Git::MultiBisect::Transitions -- where we could have been
+testing multiple test files on each commit -- here we're only concerned with
+recording the presence or absence of build-time errors.  Hence, we only need
+an array of hash refs rather than an array of arrays of hash refs.
+
+The multisection process will entail running C<run_build_on_one_commit()> over
+each commit selected by the multisection algorithm.  Each run will insert a hash
+ref with the 4 KVPs into C<@{$self-E<gt>{all_outputs}}>.  At the end of the
+multisection process those elements which we did not need to visit will still be
+C<undef>.  We will then analyze the defined elements to identify the
+transitional commits.
+
+The objective of multisection is to identify the git commits at which the
+build output -- as reflected in a file on disk holding a list of normalized
+errors -- materially changed.  We are using an md5_hex value for that error
+file as a presumably valid unique identifier for that file's content.  A
+transition point is a commit at which the output file's md5_hex differs from
+that of the immediately preceding commit.  So, to identify the first
+transition point, we need to locate the commit at which the md5_hex changed
+from that found in the very first commit in the designated commit range.  Once
+we've identified the first transition point, we'll look for the second
+transition point, i.e., that where the md5_hex changed from that observed at
+the first transition point.  We'll continue that process until we get to a
+transition point where the md5_hex is identical to that of the very last
+commit in the commit range.
+
+=cut
+
 
 #    my $target_count = scalar(@{$self->{targets}});
 #    my $max_target_idx = $#{$self->{targets}};
@@ -151,7 +208,7 @@ sub multisect_builds {
 #            }
 #        }
 #    } # END until loop
-#    my $end_time = time();
+    my $end_time = time();
 #    my %distinct_commits = ();
 #    for my $target (keys %{$self->{multisected_outputs}}) {
 #        for my $el (@{$self->{multisected_outputs}->{$target}}) {
@@ -160,15 +217,16 @@ sub multisect_builds {
 #            }
 #        }
 #    }
-#    my %timings = (
-#	    elapsed	=> $end_time - $start_time,
-#        runs => scalar(keys(%distinct_commits)),
-#    );
-#    $timings{mean} = sprintf("%.02f" => $timings{elapsed} / $timings{runs});
-#    if ($self->{verbose}) {
-#        say "Ran $timings{runs} runs; elapsed: $timings{elapsed} sec; mean: $timings{mean} sec";
-#    }
-#    $self->{timings}	  = \%timings;
+    my %timings = (
+	    elapsed	=> $end_time - $start_time,
+        #runs => scalar(keys(%distinct_commits)),
+        runs => scalar( grep {defined $_} @{$self->{all_outputs}} ),
+    );
+    $timings{mean} = sprintf("%.02f" => $timings{elapsed} / $timings{runs});
+    if ($self->{verbose}) {
+        say "Ran $timings{runs} runs; elapsed: $timings{elapsed} sec; mean: $timings{mean} sec";
+    }
+    $self->{timings}	  = \%timings;
 
     return 1;
 }
@@ -184,8 +242,6 @@ sub _prepare_for_multisection {
     my %multisected_outputs_table;
     for my $idx (0, $#{$all_commits}) {
 
-        # run_build_on_one_commit is inherited from parent
-
         my $outputs = $self->run_build_on_one_commit($all_commits->[$idx]);
         $self->{all_outputs}->[$idx] = $outputs;
 #        for my $target (@{$outputs}) {
@@ -194,9 +250,10 @@ sub _prepare_for_multisection {
 #                { map { $_ => $target->{$_} } @other_keys };
 #        }
     }
-    $self->{multisected_outputs} = { %multisected_outputs_table };
-#pp($self->{all_outputs});
-    return \%multisected_outputs_table;
+#    $self->{multisected_outputs} = { %multisected_outputs_table };
+##pp($self->{all_outputs});
+#    return \%multisected_outputs_table;
+    return $self->{all_outputs};
 }
 
 sub run_build_on_one_commit {
@@ -237,7 +294,7 @@ sub _configure_one_commit {
 sub _build_one_commit {
     my ($self, $commit) = @_; 
     my $short_sha = substr($commit,0,$self->{short});
-    my @outputs;
+    #my @outputs;
     my $build_log = File::Spec->catfile(
         $self->{outputdir},
         join('.' => (
@@ -252,14 +309,14 @@ sub _build_one_commit {
     say "Running '$cmd'" if $self->{verbose};
     my $rv = system($cmd);
     my $filtered_errors_file = $self->_filter_build_log($build_log, $short_sha);
-    push @outputs, {
+    say "Created $filtered_errors_file" if $self->{verbose};
+    return {
         commit => $commit,
         commit_short => $short_sha,
         file => $filtered_errors_file,
         md5_hex => hexdigest_one_file($filtered_errors_file),
     };
-    say "Created $filtered_errors_file" if $self->{verbose};
-    return \@outputs;
+    #return \@outputs;
 }
 
 sub _filter_build_log {
