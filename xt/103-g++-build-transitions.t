@@ -5,7 +5,6 @@ use warnings;
 use Devel::Git::MultiBisect::Opts qw( process_options );
 use Devel::Git::MultiBisect::BuildTransitions;
 use Test::More;
-use Capture::Tiny qw( :all );
 use Carp;
 use Cwd;
 use File::Spec;

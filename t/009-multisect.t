@@ -5,9 +5,6 @@ use warnings;
 use Devel::Git::MultiBisect::AllCommits;
 use Devel::Git::MultiBisect::Transitions;
 use Devel::Git::MultiBisect::Opts qw( process_options );
-use Devel::Git::MultiBisect::Auxiliary qw(
-    validate_list_sequence
-);
 use Test::More;
 use Cwd;
 use File::Spec;
