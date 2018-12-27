@@ -9,7 +9,6 @@ use Devel::Git::MultiBisect::Auxiliary qw(
 );
 use Carp;
 use Cwd;
-use List::Util qw(first sum);
 use File::Spec;
 use File::Temp qw( tempdir );
 use Data::Dump qw(dd pp);
