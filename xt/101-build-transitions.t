@@ -98,62 +98,63 @@ is($this_commit_range->[-1], $last, "Got expected last commit in range");
 my $rv = $self->multisect_builds();
 ok($rv, "multisect_builds() returned true value");
 
-##########
+note("get_multisected_outputs()");
 
-#note("get_multisected_outputs()");
+my $multisected_outputs = $self->get_multisected_outputs();
+say STDERR "AAA:";
+pp($multisected_outputs);
+is(ref($multisected_outputs), 'ARRAY',
+    "get_multisected_outputs() returned array reference");
+is(scalar(@{$multisected_outputs}), scalar(@{$self->{commits}}),
+    "get_multisected_outputs() has one element for each commit");
+for my $r (@{$multisected_outputs}) {
+    ok(test_report($r),
+        "Each element is either undefined or a hash ref with expected keys");
+}
 
-#$multisected_outputs = $Tself->get_multisected_outputs();
-#is(ref($multisected_outputs), 'HASH',
-#    "get_multisected_outputs() returned hash reference");
-#is(scalar(keys %{$multisected_outputs}), scalar(@{$target_args}),
-#    "get_multisected_outputs() has one element for each target");
-#for my $target (keys %{$multisected_outputs}) {
-#    my @reports = @{$multisected_outputs->{$target}};
-#    is(scalar(@reports), scalar(@{$commit_range}),
-#        "Array for $target has " . scalar(@{$commit_range}) . " elements, as expected");
-#    for my $r (@reports) {
-#        ok(test_report($r),
-#            "Each element is either undefined or a hash ref with expected keys");
-#    }
-#}
-#
-#note("inspect_transitions()");
-#
-#$Ttransitions = $Tself->inspect_transitions();
-#is(ref($Ttransitions), 'HASH',
-#    "get_multisected_outputs() returned hash reference");
-#is(scalar(keys %{$Ttransitions}), scalar(@{$target_args}),
-#    "get_multisected_outputs() has one element for each target");
-#for my $target (keys %{$Ttransitions}) {
-#    for my $k ( qw| newest oldest transitions | ) {
-#        ok(exists $Ttransitions->{$target}->{$k},
-#            "Got '$k' element for '$target', as expected");
-#    }
-#    for my $k ( qw| newest oldest | ) {
-#        is(ref($Ttransitions->{$target}->{$k}), 'HASH',
-#            "Got hashref as value for '$k' for '$target'");
-#        for my $l ( qw| idx md5_hex file | ) {
-#            ok(exists $Ttransitions->{$target}->{$k}->{$l},
-#                "Got key '$l' for '$k' for '$target'");
-#        }
-#    }
-#    is(ref($Ttransitions->{$target}->{transitions}), 'ARRAY',
-#        "Got arrayref as value for 'transitions' for $target");
-#    my @arr = @{$Ttransitions->{$target}->{transitions}};
-#    for my $t (@arr) {
-#        is(ref($t), 'HASH',
-#            "Got hashref as value for element in 'transitions' array");
-#        for my $m ( qw| newer older | ) {
-#            ok(exists $t->{$m}, "Got key '$m'");
-#            is(ref($t->{$m}), 'HASH', "Got hashref");
-#            for my $n ( qw| idx md5_hex file | ) {
-#                ok(exists $t->{$m}->{$n},
-#                    "Got key '$n'");
-#            }
-#        }
-#    }
-#}
+note("inspect_transitions()");
 
-##########
+my $transitions = $self->inspect_transitions();
+say STDERR "BBB:";
+pp($transitions);
+is(ref($transitions), 'HASH',
+    "inspect_transitions() returned hash reference");
+is(scalar(keys %{$transitions}), 3,
+    "inspect_transitions() has 3 elements");
+for my $k ( qw| newest oldest | ) {
+    is(ref($transitions->{$k}), 'HASH',
+        "Got hashref as value for '$k'");
+    for my $l ( qw| idx md5_hex file | ) {
+        ok(exists $transitions->{$k}->{$l},
+            "Got key '$l' for '$k'");
+    }
+}
+is(ref($transitions->{transitions}), 'ARRAY',
+    "Got arrayref as value for 'transitions'");
+my @arr = @{$transitions->{transitions}};
+for my $t (@arr) {
+    is(ref($t), 'HASH',
+        "Got hashref as value for element in 'transitions' array");
+    for my $m ( qw| newer older | ) {
+        ok(exists $t->{$m}, "Got key '$m'");
+        is(ref($t->{$m}), 'HASH', "Got hashref");
+        for my $n ( qw| idx md5_hex file | ) {
+            ok(exists $t->{$m}->{$n},
+                "Got key '$n'");
+        }
+    }
+}
 
 done_testing();
+
+# Copied from t/009.  TODO: Refactor so it's only defined once.
+
+sub test_report {
+    my $r = shift;
+    return 1 if not defined $r;
+    for my $k ( qw| commit commit_short file md5_hex | ) {
+        return 0 unless exists $r->{$k};
+    }
+    return 1;
+}
+
