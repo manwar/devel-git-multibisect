@@ -12,6 +12,8 @@ use Test::More;
 use Cwd;
 use File::Spec;
 use List::Util qw( first );
+use lib qw( t/lib );
+use Helpers qw( test_report );
 
 my $cwd = cwd();
 
@@ -330,15 +332,6 @@ for my $target (keys %{$transitions}) {
         "Got arrayref as value for 'transitions' for $target");
     ok(! scalar(@{$transitions->{$target}->{transitions}}),
         "There were no changes for '$target' in commit range, hence no transitions");
-}
-
-sub test_report {
-    my $r = shift;
-    return 1 if not defined $r;
-    for my $k ( qw| commit commit_short file md5_hex | ) {
-        return 0 unless exists $r->{$k};
-    }
-    return 1;
 }
 
 done_testing();
